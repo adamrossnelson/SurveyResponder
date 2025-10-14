@@ -74,4 +74,5 @@ cannon_responses/
 !persona.json
 responses_params.json
 *.txt
+!requirements.txt
 !questions.txt
