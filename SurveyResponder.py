@@ -11,7 +11,8 @@ import json
 import pandas as pd
 import warnings
 from tqdm import tqdm
-
+import argparse
+import sys
 def load_persona_file(file_path: str) -> Dict:
     """Load persona definitions from a JSON file.
     
@@ -518,17 +519,17 @@ Be sure to consider the  full range of options including:
 
 if __name__ == "__main__":
     print("""
-        SurveyResponder
-        Survey responses using LLMs For researchers, developers, and 
-        psychometricians testing, scoring, and metrics evaluation.
+    SurveyResponder
+    Survey responses using LLMs For researchers, developers, and 
+    psychometricians testing, scoring, and metrics evaluation.
 
-        🚀 What Is SurveyResponder?
-        SurveyResponder is a Python package and CLI tool that uses 
-        Large Language Models (LLMs), such as those accessed through 
-        Ollama - ollama.com, to generate synthetic survey instrument
-        responses. Use 'python cli.py --help' for a list of available 
-        commands to run.
+    🚀 What Is SurveyResponder?
+    SurveyResponder is a Python package and CLI tool that uses 
+    Large Language Models (LLMs), such as those accessed through 
+    Ollama - ollama.com, to generate synthetic survey instrument
+    responses. Use 'python cli.py --help' for a list of available 
+    commands to run.
 
-        More information here:
-        https://github.com/adamrossnelson/SurveyResponder
-        """)
+    More information here:
+    https://github.com/adamrossnelson/SurveyResponder
+     """)
