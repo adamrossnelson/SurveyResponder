@@ -281,7 +281,62 @@ Configuration parameters file for reproducibility:
 
 ---
 
-## 🔍 Roadmap
+## 👨‍🔬 Intended Use Cases
+
+- Simulating data for **scoring algorithm validation**
+- Explore how LLMs might (or might not) reflect or **replicate human biases**
+- Generating **mock data** for dashboards or demonstrations
+
+---
+
+## 💬 Contributing
+
+Pull requests welcome (especially if consistent with the rooadmap below)! Please open an issue first to discuss major changes. Or work to address an existing issue.
+
+### Aspirational Project Structure
+
+```
+SurveyResponder/
+├── src/
+│   └── surveyresponder/
+│       ├── __init__.py          ← re-exports SurveyResponder class, __version__
+│       ├── core.py              ← SurveyResponder class + helper functions
+│       ├── cli.py               ← CLI entry point
+│       └── data/
+│           ├── questions.txt    ← default example questions
+│           └── persona.json     ← default example persona
+├── tests/
+│   ├── conftest.py
+│   └── test_core.py
+├── examples/
+│   └── PRCA_LLM_Original_FrequencyScale.csv
+├── .github/
+│   └── workflows/
+│       └── test.yml
+├── pyproject.toml               ← build metadata, dependencies, CLI entry point
+├── README.md                    ← renamed from ReadMe.md
+├── LICENSE
+└── .gitignore                   ← simplified
+```
+
+### High Level Look at Existing Issues
+
+| Priority | Change |
+|----------|--------|
+| 🔴 High | Add `pyproject.toml` — makes the project installable [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/8) |
+| 🔴 High | Move source into `src/surveyresponder/` package directory [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/9) |
+| 🔴 High | Rename [SurveyResponder.py](cci:7://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/SurveyResponder.py:0:0-0:0) → `core.py` (PEP 8) |
+| 🟡 Medium | Rename [ReadMe.md](cci:7://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/ReadMe.md:0:0-0:0) → `README.md` |
+| 🟡 Medium | Refactor [run()](cci:1://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/SurveyResponder.py:287:4-368:17)/[run_write()](cci:1://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/SurveyResponder.py:370:4-517:17) to eliminate duplication [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/12) |
+| 🟡 Medium | Clean up imports (remove unused, move inline imports to top)[Issue](https://github.com/adamrossnelson/SurveyResponder/issues/10) |
+| 🟡 Medium | Add `psutil` to dependencies; trim [requirements.txt](cci:7://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/requirements.txt:0:0-0:0) to direct deps only [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/1) |
+| 🟡 Medium | Register CLI entry point; update README to reflect CLI is implemented |
+| 🟢 Low | Add CI workflow (GitHub Actions) [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/13) |
+| 🟢 Low | Move example data into `data/` or `examples/` subdirectories [Issue](https://github.com/adamrossnelson/SurveyResponder/issues/11) |
+| 🟢 Low | Simplify [.gitignore](cci:7://file:///Users/adamrossnelson/Documents/gits/SurveyResponder/.gitignore:0:0-0:0) strategy |
+| 🟢 Low | Add `__version__` |
+
+### 🔍 Roadmap
 
 The following features are under consideration for future releases:
 
@@ -296,22 +351,6 @@ The following features are under consideration for future releases:
   - Visualize response patterns.
 - **Evaluation module**: Compare LLM-generated responses with real human response distributions.
 - **Cloud deployment support**: Make the tool available as a web service or via API.
-
-Contributions and feature requests are welcome via GitHub Issues.
-
----
-
-## 👨‍🔬 Intended Use Cases
-
-- Simulating data for **scoring algorithm validation**
-- Explore how LLMs might (or might not) reflect or **replicate human biases**
-- Generating **mock data** for dashboards or demonstrations
-
----
-
-## 💬 Contributing
-
-Pull requests welcome! Please open an issue first to discuss major changes.
 
 ---
 
