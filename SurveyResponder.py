@@ -145,7 +145,7 @@ Please select ONE of the following responses that best matches your opinion:
 
 Respond with ONLY one of the above options, nothing else.
 
-Be sure to consider the  full range of options including: 
+Be sure to consider the full range of options including: 
 '{self.response_options[0]}' and '{self.response_options[-1]}' and all items in between."""
 
     def example_prompt(self, question: Optional[str] = None) -> str:
