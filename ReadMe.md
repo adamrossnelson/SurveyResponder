@@ -1,5 +1,11 @@
 # SurveyResponder
 
+### Developer Setup
+1. Clone: `git clone https://github.com/adamrossnelson/SurveyResponder.git`
+2. Environment: `python -m venv venv`
+3. Activate: `.\venv\Scripts\activate` (Windows)
+4. Install: `pip install -r requirements.txt`
+
 **Survey responses using LLMs** For researchers, developers, and psychometricians testing, scoring, and metrics evaluation.
 
 ## 🚀 What Is SurveyResponder?
@@ -90,7 +96,7 @@ print(f"Generated {len(df)} responses successfully!")
 ### As a Python module
 
 ```python
-from surveyresponder import SurveyResponder
+from SurveyResponder import SurveyResponder
 
 # Basic usage with defaults
 responder = SurveyResponder()
@@ -118,20 +124,23 @@ df = responder.run_write("results.csv")
 ### As a Google Colab / Jupyter Notebook
 #### [Open SurveyResponder in Colab](https://colab.research.google.com/drive/1LyVCeYnH33CTQzyo-F0kKvjYv-8jGjDB?usp=sharing)
 
-### As a CLI tool (To Be Implemented)
+### As a CLI tool 
 
-*Anticipated CLI syntax here:*
+1. **Run a survey:** `python cli.py run --questions questions.txt --num-responses 10`
+2. **Manage your questions:**
+   `python cli.py questions --list`
+   `python cli.py questions --add "I enjoy this research project."`
 
+**Full example with advanced options:**
 ```bash
-surveyresponder run \
+python cli.py run \
   --questions questions.txt \
   --persona persona.json \
-  --model llava-llama3:latest \
+  --model llama3.1:latest \
   --num-responses 100 \
   --output results.csv \
   --temperature 1.0 \
   --response-options "Never,Rarely,Sometimes,Often,Always"
-```
 
 ---
 
