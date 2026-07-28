@@ -321,44 +321,151 @@ Be sure to consider the full range of options including:
         except requests.exceptions.RequestException as e:
             raise ConnectionError(f"Failed to connect to Ollama: {str(e)}")
 
-    def process_question(self, question: Dict, persona_traits: Dict, persona_descriptions: List[str]) -> Dict:
+    def _is_valid_response(self, response: str, question: Dict) -> bool:
+        """Return True if the raw response is one of the scale's valid_responses.
+
+        If the scale does not define `valid_responses`, this falls back to the
+        set of option labels defined for the scale.
+        """
+        scale = self.scales[question["scale"]]
+        valid = scale.get("valid_responses", list(scale["options"].keys()))
+        cleaned = str(response).strip().lower()
+        return cleaned in [str(v).strip().lower() for v in valid]
+
+    def _recode_invalid_response(self, question: Dict, invalid_response: str) -> str:
+        """Ask the LLM (acting as a research assistant) to recode an invalid response.
+
+        Uses a low temperature and the same base_url as the primary responder to
+        request a single valid numeric response.
+        """
+        scale = self.scales[question["scale"]]
+        valid_responses = scale.get("valid_responses", list(scale["options"].keys()))
+        valid_str = ", ".join(str(v) for v in valid_responses)
+        option_labels = list(scale["options"].keys())
+        prompt = (
+            "You are a research assistant who specializes in manually recoding "
+            "incorrectly entered survey responses.\n\n"
+            f"A respondent was asked a survey question with the following valid responses:\n"
+            f"{valid_str}.\n\n"
+            f"The full option labels are: {', '.join(option_labels)}.\n\n"
+            f"The respondent incorrectly entered:\n\"{invalid_response}\"\n\n"
+            "Return the single most likely correctly valid response.\n"
+            f"Respond with ONLY one of: {valid_str}."
+        )
+        try:
+            response = requests.post(
+                self.base_url,
+                json={
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "stream": False,
+                    "temperature": 0.2
+                }
+            )
+            response.raise_for_status()
+            return response.json()["response"].strip()
+        except requests.exceptions.RequestException as e:
+            raise ConnectionError(f"Failed to recode invalid response: {str(e)}")
+
+    def _apply_reverse_code(self, response: str, question: Dict) -> Tuple[str, bool]:
+        """Reverse-code a numeric response using the scale's option codes.
+
+        Returns (new_response, applied). If the question is not reverse_coded or
+        the response cannot be parsed as one of the scale's numeric codes, the
+        response is returned unchanged with applied=False.
+        """
+        if not question.get("reverse_coded"):
+            return response, False
+        scale = self.scales[question["scale"]]
+        codes = list(scale["options"].values())
+        try:
+            value = int(str(response).strip())
+        except (ValueError, TypeError):
+            return response, False
+        if value not in codes:
+            return response, False
+        new_value = max(codes) + min(codes) - value
+        return str(new_value), True
+
+    def process_question(self,
+                         question: Dict,
+                         persona_traits: Dict,
+                         persona_descriptions: List[str],
+                         validate: bool = False,
+                         on_invalid: str = "none",
+                         max_retries: int = 2,
+                         reverse_code: bool = False) -> Dict:
         """Process a single question and get a response.
-        
+
         Args:
             question (Dict): The survey question object with 'text' and 'scale' keys.
             persona_traits (Dict): Dictionary of trait categories to selected values.
             persona_descriptions (List[str]): List of descriptions defining the persona.
-            
+            validate (bool): If True, validate the response against the scale's
+                'valid_responses'. Defaults to False.
+            on_invalid (str): Action when an invalid response is detected.
+                One of 'none' (accept as-is), 'retry' (re-ask the original prompt
+                up to max_retries times), or 'recode' (ask an LLM research
+                assistant to recode the invalid response). Defaults to 'none'.
+            max_retries (int): Maximum retry attempts when on_invalid='retry'.
+                Defaults to 2.
+            reverse_code (bool): If True, apply numeric reverse coding to
+                questions whose 'reverse_coded' flag is True. Defaults to False.
+
         Returns:
-            Dict: Dictionary containing 'question', 'response', and other metadata
-            
+            Dict: Dictionary containing question, prompt, response (final),
+                original_response, validated, action_taken, reverse_coded_applied,
+                and persona metadata.
+
         Raises:
-            Exception: If there is an error processing the question or getting a response
+            Exception: If there is an error processing the question or getting a response.
         """
         prompt = self._generate_prompt(question, persona_descriptions)
         response = self.get_response(question, persona_descriptions)
+        original_response = response
 
-        # TODO: Validate response against scale options. Perhaps the questions.json
-        #       should include a field for valid options or a range of valid options.
-        #       This will allow for more robust validation and error handling.
-        # TODO: Establish option in the run() and the run_write() methods
-        #       that will govern whether to validate responses (and also rules
-        #       for validation) and what to do if validation fails such as retry
-        #       (which would send back a retry request to the same context window)
-        #       using http://localhost:11434/api/chat (instead of /api/generate)
-        #       infer the closest valid match, or mark as invalid and move on.
-        # TODO: Create an output file that will give one row for each response
-        #       it will identify which observation and which column (question)
-        #       along with whether that response valideted, was inferred, or 
-        #       was marked as invalid.
-        # TODO: Add options for handeling reverse coding. Will be based on the
-        #       flag specified in questions.json. And should be an option on the
-        #       run() and run_write() methods to enable or disable this feature.
-        #       This should be disabled by default (no reverse coding by default).
+        validated = None
+        action_taken = "not_checked"
+
+        if validate:
+            validated = self._is_valid_response(response, question)
+            if validated:
+                action_taken = "validated"
+            else:
+                if on_invalid == "retry":
+                    action_taken = "invalid"
+                    for _ in range(max_retries):
+                        retry_response = self.get_response(question, persona_descriptions)
+                        if self._is_valid_response(retry_response, question):
+                            response = retry_response
+                            validated = True
+                            action_taken = "retry"
+                            break
+                elif on_invalid == "recode":
+                    try:
+                        recoded = self._recode_invalid_response(question, response)
+                    except ConnectionError:
+                        recoded = None
+                    if recoded is not None and self._is_valid_response(recoded, question):
+                        response = recoded
+                        validated = True
+                        action_taken = "recode"
+                    else:
+                        action_taken = "invalid"
+                else:
+                    action_taken = "invalid"
+
+        reverse_applied = False
+        if reverse_code:
+            response, reverse_applied = self._apply_reverse_code(response, question)
 
         return {
             'question': question,
             'response': response,
+            'original_response': original_response,
+            'validated': validated,
+            'action_taken': action_taken,
+            'reverse_coded_applied': 1 if reverse_applied else 0,
             'prompt': prompt,
             'persona_traits': persona_traits,
             'persona_descriptions': persona_descriptions
@@ -396,17 +503,36 @@ Be sure to consider the full range of options including:
             print(f"   Options: {options}")
         print()
 
-    def run(self, verbosity: int = 1) -> pd.DataFrame:
+    def run(self,
+            verbosity: int = 1,
+            validate: bool = False,
+            on_invalid: str = "none",
+            max_retries: int = 2,
+            reverse_code: bool = False) -> pd.DataFrame:
         """Generate synthetic survey responses and return as a DataFrame.
         
         If any errors occur during generation, warnings will be issued. Processing will stop
         if max_try consecutive errors are encountered. The DataFrame will include all
         successfully generated responses up to that point.
-        
+
+        A cell-by-cell response log is collected on `self.response_log` (one entry
+        per respondent-question pair). Use `run_write()` to also persist this log
+        to a `{output_file_base}_response_log.csv` file.
+
         Args:
             verbosity (int): 1 (default) prints each question with its preface and
                 response options before generation begins. 0 suppresses that output.
-        
+            validate (bool): If True, validate each response against the scale's
+                'valid_responses'. Defaults to False.
+            on_invalid (str): Action when an invalid response is detected. One of
+                'none' (accept as-is), 'retry' (re-ask the original prompt up to
+                max_retries times), or 'recode' (ask an LLM research assistant to
+                recode the invalid response). Defaults to 'none'.
+            max_retries (int): Maximum retry attempts when on_invalid='retry'.
+                Defaults to 2.
+            reverse_code (bool): If True, apply numeric reverse coding to
+                questions whose 'reverse_coded' flag is True. Defaults to False.
+
         Returns:
             pd.DataFrame: DataFrame containing all generated responses
             
@@ -421,6 +547,9 @@ Be sure to consider the full range of options including:
 
         # Initialize empty lists to store the data
         data = []
+
+        # Cell-by-cell response log
+        self.response_log = []
 
         # Initialize error counter
         error_count = 0
@@ -440,13 +569,39 @@ Be sure to consider the full range of options including:
                 # Process each question
                 for question in self.questions:
                     try:
-                        result = self.process_question(question, persona_traits, persona_descriptions)
+                        result = self.process_question(
+                            question, persona_traits, persona_descriptions,
+                            validate=validate,
+                            on_invalid=on_invalid,
+                            max_retries=max_retries,
+                            reverse_code=reverse_code
+                        )
                         row_data.append(result.get('response', 'ERROR'))
+                        self.response_log.append({
+                            "resid": resid,
+                            "question_id": question["id"],
+                            "scale": question["scale"],
+                            "original_response": result.get("original_response"),
+                            "final_response": result.get("response"),
+                            "validated": result.get("validated"),
+                            "action_taken": result.get("action_taken"),
+                            "reverse_coded": result.get("reverse_coded_applied", 0),
+                        })
                         error_count = 0
                     except Exception as e:
                         error_count += 1
                         warnings.warn(f"Error processing question '{question['text']}': {str(e)}")
                         row_data.append("ERROR")
+                        self.response_log.append({
+                            "resid": resid,
+                            "question_id": question["id"],
+                            "scale": question["scale"],
+                            "original_response": "ERROR",
+                            "final_response": "ERROR",
+                            "validated": False,
+                            "action_taken": "error",
+                            "reverse_coded": 0,
+                        })
 
                         if error_count >= self.max_try:
                             warnings.warn(
@@ -486,12 +641,19 @@ Be sure to consider the full range of options including:
         df = pd.DataFrame(data, columns=columns)
         return df
 
-    def run_write(self, output_file: str, verbosity: int = 1) -> pd.DataFrame:
+    def run_write(self,
+                  output_file: str,
+                  verbosity: int = 1,
+                  validate: bool = False,
+                  on_invalid: str = "none",
+                  max_retries: int = 2,
+                  reverse_code: bool = False) -> pd.DataFrame:
         """Generate synthetic survey responses, write to file as they're generated, and return as DataFrame.
         
         This method writes each response to the output file as soon as it's generated, ensuring
         that partial results are saved even if an error occurs during generation.
-        Also writes a JSON file with the parameters used for this run for reproducibility.
+        Also writes a JSON file with the parameters used for this run for reproducibility
+        and a cell-by-cell CSV response log named `{output_file_base}_response_log.csv`.
         If the output file already exists, an enumerated suffix will be added to prevent overwriting.
         Progress is displayed using a progress bar.
         
@@ -499,6 +661,16 @@ Be sure to consider the full range of options including:
             output_file (str): Path to the output CSV file
             verbosity (int): 1 (default) prints each question with its preface and
                 response options before generation begins. 0 suppresses that output.
+            validate (bool): If True, validate each response against the scale's
+                'valid_responses'. Defaults to False.
+            on_invalid (str): Action when an invalid response is detected. One of
+                'none' (accept as-is), 'retry' (re-ask the original prompt up to
+                max_retries times), or 'recode' (ask an LLM research assistant to
+                recode the invalid response). Defaults to 'none'.
+            max_retries (int): Maximum retry attempts when on_invalid='retry'.
+                Defaults to 2.
+            reverse_code (bool): If True, apply numeric reverse coding to
+                questions whose 'reverse_coded' flag is True. Defaults to False.
             
         Returns:
             pd.DataFrame: DataFrame containing all generated responses
@@ -511,6 +683,7 @@ Be sure to consider the full range of options including:
         import psutil
         import platform
         import sys
+        import csv
         base_name, extension = os.path.splitext(output_file) if '.' in output_file else (output_file, '')
         counter = 1
         final_output_file = output_file
@@ -527,9 +700,24 @@ Be sure to consider the full range of options including:
         # Initialize empty list to store the data for the returned DataFrame
         data = []
 
+        # Cell-by-cell response log
+        self.response_log = []
+
         # Write header to the output file
         with open(output_file, 'w') as f:
             f.write(",".join(columns) + "\n")
+
+        # Prepare response log file
+        base_output = output_file.rsplit('.', 1)[0] if '.' in output_file else output_file
+        response_log_file = base_output + "_response_log.csv"
+        log_columns = [
+            "resid", "question_id", "scale",
+            "original_response", "final_response",
+            "validated", "action_taken", "reverse_coded"
+        ]
+        log_fh = open(response_log_file, 'w', newline='')
+        log_writer = csv.DictWriter(log_fh, fieldnames=log_columns)
+        log_writer.writeheader()
 
         # Save parameters to JSON file for reproducibility
         params_file = output_file.rsplit('.', 1)[0] + "_params.json" if '.' in output_file else output_file + "_params.json"
@@ -569,6 +757,11 @@ Be sure to consider the full range of options including:
             "questions_json": {"scales": self.scales, "questions": self.questions},
             "persona_dictionary": self.persona_dict,
             "example_prompts": example_prompts,
+            "validate": validate,
+            "on_invalid": on_invalid,
+            "max_retries": max_retries,
+            "reverse_code": reverse_code,
+            "response_log_file": response_log_file,
             "computer_memory":computer_memory,
             "computer_os":computer_os,
             "computer_python":computer_python
@@ -596,13 +789,45 @@ Be sure to consider the full range of options including:
                 # Process each question
                 for question in self.questions:
                     try:
-                        result = self.process_question(question, persona_traits, persona_descriptions)
+                        result = self.process_question(
+                            question, persona_traits, persona_descriptions,
+                            validate=validate,
+                            on_invalid=on_invalid,
+                            max_retries=max_retries,
+                            reverse_code=reverse_code
+                        )
                         row_data.append(result.get('response', 'ERROR'))
+                        log_row = {
+                            "resid": resid,
+                            "question_id": question["id"],
+                            "scale": question["scale"],
+                            "original_response": result.get("original_response"),
+                            "final_response": result.get("response"),
+                            "validated": result.get("validated"),
+                            "action_taken": result.get("action_taken"),
+                            "reverse_coded": result.get("reverse_coded_applied", 0),
+                        }
+                        self.response_log.append(log_row)
+                        log_writer.writerow(log_row)
+                        log_fh.flush()
                         error_count = 0
                     except Exception as e:
                         error_count += 1
                         warnings.warn(f"Error processing question '{question['text']}': {str(e)}")
                         row_data.append("ERROR")
+                        log_row = {
+                            "resid": resid,
+                            "question_id": question["id"],
+                            "scale": question["scale"],
+                            "original_response": "ERROR",
+                            "final_response": "ERROR",
+                            "validated": False,
+                            "action_taken": "error",
+                            "reverse_coded": 0,
+                        }
+                        self.response_log.append(log_row)
+                        log_writer.writerow(log_row)
+                        log_fh.flush()
 
                         if error_count >= self.max_try:
                             warnings.warn(
@@ -635,6 +860,8 @@ Be sure to consider the full range of options including:
                         f"Returning {len(data)} successful responses."
                     )
                     break
+
+        log_fh.close()
 
         if not data:
             raise RuntimeError(

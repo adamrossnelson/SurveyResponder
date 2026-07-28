@@ -28,7 +28,10 @@ A small collection of previous responses are available via [Google Drive](https:
 - ✅ Persona-driven simulation (via a JSON file with structured traits and descriptions).
 - ✅ Questions specified in JSON with stable ids (used as output column headings) and reverse-coding flags.
 - ✅ Generates N responses per session.
-- ✅ Outputs a tidy CSV file.
+- ✅ Outputs a tidy CSV file and a cell-by-cell response log CSV.
+- ✅ Optional response validation against per-scale `valid_responses`.
+- ✅ Optional LLM-based recoding of invalid responses (research-assistant prompt).
+- ✅ Optional numeric reverse coding for questions flagged `reverse_coded`.
 - ✅ Temperature setting for controlling LLM creativity.
 - ✅ Parameter logging for reproducibility.
 - ✅ Configurable LLM base URL for using remote instances.
@@ -117,8 +120,23 @@ responder = SurveyResponder(
 df = responder.run()
 
 # Option 2: Get DataFrame and write to CSV file (records save as they're generated)
-#           Also creates results_params.json with configuration parameters
+#           Also creates results_params.json with configuration parameters and
+#           results_response_log.csv with one row per (respondent, question).
 df = responder.run_write("results.csv")
+
+# Option 3: Validate responses against each scale's `valid_responses` list and,
+#           when the model returns an invalid answer, ask an LLM "research
+#           assistant" to recode it to the most likely valid response. Also
+#           apply numeric reverse coding to questions flagged `reverse_coded`.
+df = responder.run_write(
+    "results.csv",
+    validate=True,          # check response is in scale["valid_responses"]
+    on_invalid="recode",    # "none" | "retry" | "recode"
+    max_retries=2,          # only used when on_invalid="retry"
+    reverse_code=True       # apply max+min-value to reverse_coded questions
+)
+
+# The cell-by-cell log is also available as `responder.response_log`
 ```
 ### As a Google Colab / Jupyter Notebook
 #### [Open SurveyResponder in Colab](https://colab.research.google.com/drive/1LyVCeYnH33CTQzyo-F0kKvjYv-8jGjDB?usp=sharing)
@@ -267,7 +285,8 @@ JSON file with named response scales and a list of questions. Each question's `i
         "neutral": 3,
         "agree": 4,
         "strongly agree": 5
-      }
+      },
+      "valid_responses": ["1", "2", "3", "4", "5"]
     }
   },
   "questions": [
@@ -277,6 +296,8 @@ JSON file with named response scales and a list of questions. Each question's `i
   ]
 }
 ```
+
+Each scale may include an optional `valid_responses` list. When `run()` or `run_write()` is called with `validate=True`, raw model responses are checked (case-insensitive, stripped) against this list. If a scale omits `valid_responses`, the full set of option labels is used as the valid set.
 
 ### Input: `persona.json`
 
@@ -298,6 +319,21 @@ Example format:
 | -------- | --- | ------ | ------- | ----------- | ---------------- | ------------------- |
 | 1        | 18  | male   | music   | agree       | neutral          | strongly agree      |
 | 2        | 20  | female | art     | disagree    | agree            | agree               |
+
+### Output: `results_response_log.csv`
+
+When `run_write()` is called, a cell-by-cell log is written alongside the results file with one row per (respondent, question). The same log is also available in memory as `responder.response_log`.
+
+| Column              | Description                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `resid`             | Respondent id (matches the `resid` column in `results.csv`).                                             |
+| `question_id`       | Question id from `questions.json`.                                                                       |
+| `scale`             | Name of the scale that question references.                                                              |
+| `original_response` | Raw response returned by the LLM before any recoding or reverse coding.                                  |
+| `final_response`    | Response after validation/recoding/reverse-coding (this is what appears in `results.csv`).               |
+| `validated`         | `True`/`False`/`None`. `None` means validation was not enabled.                                          |
+| `action_taken`      | `not_checked`, `validated`, `retry`, `recode`, `invalid`, or `error`.                                    |
+| `reverse_coded`     | `1` if reverse coding was applied to this cell, else `0`.                                                |
 
 ### Output: `results_params.json`
 
@@ -397,7 +433,6 @@ The following features are under consideration for future releases:
 - **Persona templates**: Provide predefined personas for ease of use.
 - **Expanded persona logic**: Include sampling strategies, weights, and dependencies between persona traits.
 - **Question metadata support**: Allow users to include additional metadata about questions (e.g., topic, valence) to inform response generation.
-- **Numeric and reverse-coded output options**: Add options to `run()` and `run_write()` to optionally return numeric-coded responses and to optionally apply reverse coding where applicable (the per-question `reverse_coded` flag and numeric codes are already captured in `questions.json`).
 - **Batch processing of surveys**: Enable running multiple different surveys or question sets in one go.
 - **Psychometric summaries**:
   - Perform exploratory factor analysis (EFA) and provide outputs.

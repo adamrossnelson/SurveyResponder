@@ -28,10 +28,11 @@ wheels/
 
 # Jupyter Notebook
 *.ipynb
-!example1001/example_implementation.ipynb
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
 example1001/
+reprompt1001/
+reprompt1002/
 
 # IPython
 profile_default/

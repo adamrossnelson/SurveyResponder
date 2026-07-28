@@ -9,7 +9,7 @@
         "4) agree": 4,
         "5) strongly agree": 5
       },
-      "valid_responses": ["1", "2", "3", "4", "5", "strongly agree", "agree", "neutral", "disagree", "strongly disagree"]
+      "valid_responses": ["1", "2", "3", "4", "5", "strongly disagree", "disagree", "neutral", "agree", "strongly agree"]
     },
     "freq5": {
       "preface": "Respond with a number that cooresponds to your answer. Only respond with a number and nothing else. How often is the following statement true for you:",
