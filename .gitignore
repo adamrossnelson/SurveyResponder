@@ -28,8 +28,10 @@ wheels/
 
 # Jupyter Notebook
 *.ipynb
+!example1001/example_implementation.ipynb
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
+example1001/
 
 # IPython
 profile_default/
@@ -72,6 +74,7 @@ cannon_responses/
 !responses.csv
 *.json
 !persona.json
+!questions.json
 responses_params.json
 *.txt
 !requirements.txt

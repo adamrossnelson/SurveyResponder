@@ -7,11 +7,38 @@ import warnings
 
 @pytest.fixture
 def sample_questions_file():
-    """Create a temporary questions file for testing."""
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-        f.write("Question 1: How often do you exercise?\n")
-        f.write("Question 2: Do you enjoy reading?\n")
-        f.write("Question 3: How well do you handle stress?\n")
+    """Create a temporary questions JSON file for testing."""
+    survey_data = {
+        "scales": {
+            "likert5": {
+                "preface": "How strongly do you agree or disagree with the following statement:",
+                "options": {
+                    "strongly disagree": 1,
+                    "disagree": 2,
+                    "neutral": 3,
+                    "agree": 4,
+                    "strongly agree": 5
+                }
+            },
+            "freq5": {
+                "preface": "How often is the following true for you:",
+                "options": {
+                    "never": 1,
+                    "rarely": 2,
+                    "sometimes": 3,
+                    "often": 4,
+                    "always": 5
+                }
+            }
+        },
+        "questions": [
+            {"id": "exercise_often", "text": "I exercise regularly.", "scale": "freq5", "reverse_coded": False},
+            {"id": "enjoy_reading", "text": "I enjoy reading.", "scale": "likert5", "reverse_coded": False},
+            {"id": "handle_stress", "text": "I handle stress well.", "scale": "likert5", "reverse_coded": True}
+        ]
+    }
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+        json.dump(survey_data, f)
     yield f.name
     os.unlink(f.name)
 

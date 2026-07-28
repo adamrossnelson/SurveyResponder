@@ -1,0 +1,124 @@
+{
+  "scales": {
+    "likert5": {
+      "preface": "Respond with a number that cooresponds to your answer. Only respond with a number and nothing else. How strongly do you agree or disagree with the following statement:",
+      "options": {
+        "1) strongly disagree": 1,
+        "2) disagree": 2,
+        "3) neutral": 3,
+        "4) agree": 4,
+        "5) strongly agree": 5
+      },
+      "valid_responses": ["1", "2", "3", "4", "5", "strongly agree", "agree", "neutral", "disagree", "strongly disagree"]
+    },
+    "freq5": {
+      "preface": "Respond with a number that cooresponds to your answer. Only respond with a number and nothing else. How often is the following statement true for you:",
+      "options": {
+        "1) never": 1,
+        "2) rarely": 2,
+        "3) sometimes": 3,
+        "4) often": 4,
+        "5) always": 5
+      },
+      "valid_responses": ["1", "2", "3", "4", "5", "never", "rarely", "sometimes", "often", "always"]
+    }
+  },
+  "questions": [
+    {
+      "id": "enjoy_student",
+      "text": "I enjoy being a student.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "enjoy_learning",
+      "text": "I enjoy learning new things.",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "see_smart",
+      "text": "I see myself as smart.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "studying_happy",
+      "text": "Studying makes me happy",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "describe_clever",
+      "text": "I describe myself as clever.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "calm_pressure",
+      "text": "I stay calm under pressure",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "recover_setbacks",
+      "text": "I recover quickly from setbacks",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "rarely_overwhelmed",
+      "text": "I rarely feel overwhelmed.",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "handle_stress",
+      "text": "I handle stress well.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "emotionally_balanced",
+      "text": "I feel emotionally balanced.",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "no_fear_speech",
+      "text": "I have no fear of giving a speech.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "relaxed_speech",
+      "text": "I feel relaxed while giving a speech.",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "confident_speech",
+      "text": "I face the prospect of giving a speech with confidence.",
+      "scale": "likert5",
+      "reverse_coded": false
+    },
+    {
+      "id": "natural_leader",
+      "text": "I am a natural leader.",
+      "scale": "freq5",
+      "reverse_coded": false
+    },
+    {
+      "id": "forget_speech",
+      "text": "I forget facts I really know when giving a speech.",
+      "scale": "likert5",
+      "reverse_coded": true
+    },
+    {
+      "id": "confused_speech",
+      "text": "My thoughts get confused when giving a speech.",
+      "scale": "freq5",
+      "reverse_coded": true
+    }
+  ]
+}

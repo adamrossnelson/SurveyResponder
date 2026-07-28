@@ -13,6 +13,7 @@ import warnings
 from tqdm import tqdm
 import argparse
 import sys
+
 def load_persona_file(file_path: str) -> Dict:
     """Load persona definitions from a JSON file.
     
@@ -46,21 +47,79 @@ def generate_persona_from_file(persona_dict: Dict) -> Tuple[Dict, List[str]]:
 
     return persona_traits, persona_descriptions
 
-def load_questions(file_path: str) -> List[str]:
-    """Load questions from a text file.
-    
+def load_questions(file_path: str) -> Tuple[Dict, List[Dict]]:
+    """Load named response scales and questions from a JSON survey file.
+
+    The file must contain a JSON object with two top-level keys:
+    - 'scales': a dictionary mapping scale names to scale definitions. Each
+      scale definition has a 'preface' (str) and 'options' (dict mapping
+      response labels to numeric codes).
+    - 'questions': a list of question objects. Each question has an 'id'
+      (used as the output column heading), 'text', a 'scale' name reference,
+      and an optional 'reverse_coded' flag (defaults to False).
+
     Args:
-        file_path (str): Path to the questions text file
-        
+        file_path (str): Path to the questions JSON file
+
     Returns:
-        List[str]: List of questions
+        Tuple[Dict, List[Dict]]: The scales dictionary and the list of questions
+
+    Raises:
+        ValueError: If the file is not valid JSON or does not match the
+            expected structure.
     """
     with open(file_path, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Could not parse '{file_path}' as JSON ({e}). Questions are now "
+                "specified as a JSON file with a 'scales' library and a 'questions' "
+                "list (see questions.json for an example). Plain-text questions "
+                "files are no longer supported."
+            )
+
+    if isinstance(data, list):
+        raise ValueError(
+            f"'{file_path}' contains a JSON list. The questions file must be a JSON "
+            "object with 'scales' and 'questions' keys (see questions.json for an example)."
+        )
+    if not isinstance(data, dict) or "scales" not in data or "questions" not in data:
+        raise ValueError(
+            f"'{file_path}' must be a JSON object with 'scales' and 'questions' keys "
+            "(see questions.json for an example)."
+        )
+
+    scales = data["scales"]
+    questions = data["questions"]
+
+    for name, scale in scales.items():
+        if "preface" not in scale or "options" not in scale or not scale["options"]:
+            raise ValueError(
+                f"Scale '{name}' must define a 'preface' and a non-empty 'options' "
+                "dictionary mapping response labels to numeric codes."
+            )
+
+    seen_ids = set()
+    for question in questions:
+        for key in ("id", "text", "scale"):
+            if key not in question:
+                raise ValueError(f"Question {question} is missing required key '{key}'.")
+        if question["id"] in seen_ids:
+            raise ValueError(f"Duplicate question id '{question['id']}'. Question ids must be unique.")
+        seen_ids.add(question["id"])
+        if question["scale"] not in scales:
+            raise ValueError(
+                f"Question '{question['id']}' references undefined scale '{question['scale']}'. "
+                f"Defined scales: {list(scales.keys())}"
+            )
+        question.setdefault("reverse_coded", False)
+
+    return scales, questions
 
 class SurveyResponder:
     def __init__(self,
-                 questions_path: str = "questions.txt",
+                 questions_path: str = "questions.json",
                  persona_path: str = "persona.json",
                  model_name: str = "llama3.1:latest",
                  response_options: Optional[List[str]] = None,
@@ -71,15 +130,26 @@ class SurveyResponder:
         """Initialize the SurveyResponder with specified paths and parameters.
         
         Args:
-            questions_path (str): Path to the questions text file. Defaults to "questions.txt".
+            questions_path (str): Path to the questions JSON file containing
+                'scales' and 'questions'. Defaults to "questions.json".
             persona_path (str): Path to the persona JSON file. Defaults to "persona.json".
             model_name (str): Name of the Ollama model to use. Defaults to "llama3.1:latest".
-            response_options (Optional[List[str]]): Custom response options. If None, uses default Likert scale.
+            response_options: Removed; must be None. Response options are now
+                defined as named scales in the questions JSON file.
+                If specified a deprecation message and ValueError will raise.
             num_responses (int): Number of responses to generate. Defaults to 10.
             temperature (float): Temperature setting for LLM response generation. Defaults to 1.0.
             base_url (str): URL for the Ollama API. Defaults to "http://localhost:11434/api/generate".
             max_try (int): Maximum number of consecutive errors before early termination.
         """
+        if response_options is not None:
+            raise ValueError(
+                "The response_options parameter has been removed. Response options "
+                "are now defined as named scales in the questions JSON file passed "
+                f"to questions_path ('{questions_path}'). Each question references "
+                "a scale by name (see questions.json for an example)."
+            )
+
         self.questions_path = questions_path
         self.persona_path = persona_path
         self.model_name = model_name
@@ -88,18 +158,18 @@ class SurveyResponder:
         self.temperature = temperature
         self.max_try = max_try
 
-        # Load questions and persona dictionary
-        self.questions = load_questions(questions_path)
+        # Load scales, questions, and persona dictionary
+        self.scales, self.questions = load_questions(questions_path)
         self.persona_dict = load_persona_file(persona_path)
 
-        # Default 5-point Likert scale if no custom options provided
-        self.response_options = response_options if response_options else [
-            "strongly disagree",
-            "disagree",
-            "neutral",
-            "agree",
-            "strongly agree"
-        ]
+        # Guard against output column collisions
+        reserved = {"resid", "model"} | set(self.persona_dict.keys())
+        clashes = [q["id"] for q in self.questions if q["id"] in reserved]
+        if clashes:
+            raise ValueError(
+                f"Question ids collide with reserved or persona column names: {clashes}. "
+                "Rename these ids in the questions JSON file."
+            )
 
     def __str__(self) -> str:
         """Return a user-friendly string representation of the SurveyResponder."""
@@ -118,37 +188,40 @@ class SurveyResponder:
         return len(self.questions)
 
     def __getitem__(self, index):
-        """Allow indexing to access questions directly."""
+        """Allow indexing to access question dictionaries directly."""
         return self.questions[index]
 
     def __iter__(self):
-        """Make SurveyResponder iterable over its questions."""
+        """Make SurveyResponder iterable over its question dictionaries."""
         return iter(self.questions)
 
-    def _generate_prompt(self, question: str, persona_descriptions: List[str]) -> str:
+    def _generate_prompt(self, question: Dict, persona_descriptions: List[str]) -> str:
         """Generate a prompt for the LLM that includes the question and available responses.
         
+        The prompt preface and response options come from the scale the
+        question references in the questions JSON file.
+        
         Args:
-            question (str): The survey question to be answered.
+            question (Dict): The survey question object with 'text' and 'scale' keys.
             persona_descriptions (List[str]): List of descriptions defining the responding persona.
             
         Returns:
             str: Formatted prompt for the LLM.
         """
         persona_description = "You are a someone " + ", ".join(persona_descriptions) + "."
+        scale = self.scales[question["scale"]]
+        option_labels = list(scale["options"].keys())
         return f"""{persona_description}
 
-Question: {question}
-        
-Please select ONE of the following responses that best matches your opinion:
-{', '.join(self.response_options)}
+{scale["preface"]}
+"{question["text"]}"
 
-Respond with ONLY one of the above options, nothing else.
+{', '.join(option_labels)}
 
 Be sure to consider the full range of options including: 
-'{self.response_options[0]}' and '{self.response_options[-1]}' and all items in between."""
+'{option_labels[0]}' and '{option_labels[-1]}' and all items in between."""
 
-    def example_prompt(self, question: Optional[str] = None) -> str:
+    def example_prompt(self, question: Optional[Union[str, Dict]] = None) -> str:
         """Generate and return an example prompt using a random persona.
         
         This method is useful for previewing what prompts will be sent to the LLM.
@@ -156,8 +229,10 @@ Be sure to consider the full range of options including:
         provided question or the first question from the loaded questions file.
         
         Args:
-            question (Optional[str]): Custom question to use in the prompt.
-                                      If None, uses the first question from the loaded file.
+            question (Optional[Union[str, Dict]]): Custom question to use in the prompt.
+                If None, uses the first question from the loaded file. If a string is
+                provided, it is paired with the first scale defined in the questions
+                file. If a dictionary is provided, it must include 'text' and 'scale' keys.
                                       
         Returns:
             str: The constructed prompt that would be sent to the LLM.
@@ -166,11 +241,15 @@ Be sure to consider the full range of options including:
         _, persona_descriptions = generate_persona_from_file(self.persona_dict)
 
         # Use the provided question or the first question from the loaded questions
+        default_scale = next(iter(self.scales))
         if question is None:
             if len(self.questions) > 0:
                 question = self.questions[0]
             else:
-                question = "This is a placeholder question since no questions were loaded."
+                question = {"text": "This is a placeholder question since no questions were loaded.",
+                            "scale": default_scale}
+        elif isinstance(question, str):
+            question = {"text": question, "scale": default_scale}
 
         # Generate and return the prompt
         return self._generate_prompt(question, persona_descriptions)
@@ -206,11 +285,11 @@ Be sure to consider the full range of options including:
 
         return results
 
-    def get_response(self, question: str, persona_descriptions: List[str]) -> str:
+    def get_response(self, question: Dict, persona_descriptions: List[str]) -> str:
         """Get a response for a single question.
         
         Args:
-            question (str): The survey question to be answered.
+            question (Dict): The survey question object with 'text' and 'scale' keys.
             persona_descriptions (List[str]): List of descriptions defining the responding persona.
             
         Returns:
@@ -242,11 +321,11 @@ Be sure to consider the full range of options including:
         except requests.exceptions.RequestException as e:
             raise ConnectionError(f"Failed to connect to Ollama: {str(e)}")
 
-    def process_question(self, question: str, persona_traits: Dict, persona_descriptions: List[str]) -> Dict:
+    def process_question(self, question: Dict, persona_traits: Dict, persona_descriptions: List[str]) -> Dict:
         """Process a single question and get a response.
         
         Args:
-            question (str): The survey question to be answered.
+            question (Dict): The survey question object with 'text' and 'scale' keys.
             persona_traits (Dict): Dictionary of trait categories to selected values.
             persona_descriptions (List[str]): List of descriptions defining the persona.
             
@@ -258,6 +337,24 @@ Be sure to consider the full range of options including:
         """
         prompt = self._generate_prompt(question, persona_descriptions)
         response = self.get_response(question, persona_descriptions)
+
+        # TODO: Validate response against scale options. Perhaps the questions.json
+        #       should include a field for valid options or a range of valid options.
+        #       This will allow for more robust validation and error handling.
+        # TODO: Establish option in the run() and the run_write() methods
+        #       that will govern whether to validate responses (and also rules
+        #       for validation) and what to do if validation fails such as retry
+        #       (which would send back a retry request to the same context window)
+        #       using http://localhost:11434/api/chat (instead of /api/generate)
+        #       infer the closest valid match, or mark as invalid and move on.
+        # TODO: Create an output file that will give one row for each response
+        #       it will identify which observation and which column (question)
+        #       along with whether that response valideted, was inferred, or 
+        #       was marked as invalid.
+        # TODO: Add options for handeling reverse coding. Will be based on the
+        #       flag specified in questions.json. And should be an option on the
+        #       run() and run_write() methods to enable or disable this feature.
+        #       This should be disabled by default (no reverse coding by default).
 
         return {
             'question': question,
@@ -280,17 +377,35 @@ Be sure to consider the full range of options including:
             "base_url": self.base_url,
             "num_responses": self.num_responses,
             "temperature": self.temperature,
-            "response_options": self.response_options,
+            "scales": self.scales,
             "num_questions": len(self.questions),
             "persona_traits": list(self.persona_dict.keys())
         }
 
-    def run(self) -> pd.DataFrame:
+    def _print_survey_overview(self) -> None:
+        """Print each question with its preface and response options for previewing runs."""
+        print(f"Survey: {len(self.questions)} questions from {self.questions_path}")
+        print(f"Scales: {', '.join(self.scales.keys())}")
+        for i, question in enumerate(self.questions, 1):
+            scale = self.scales[question["scale"]]
+            options = ", ".join(scale["options"].keys())
+            reverse_note = "  (reverse-coded)" if question.get("reverse_coded") else ""
+            print(f"\n{i}. [{question['id']}] ({question['scale']}){reverse_note}")
+            print(f"   {scale['preface']}")
+            print(f"   \"{question['text']}\"")
+            print(f"   Options: {options}")
+        print()
+
+    def run(self, verbosity: int = 1) -> pd.DataFrame:
         """Generate synthetic survey responses and return as a DataFrame.
         
         If any errors occur during generation, warnings will be issued. Processing will stop
         if max_try consecutive errors are encountered. The DataFrame will include all
         successfully generated responses up to that point.
+        
+        Args:
+            verbosity (int): 1 (default) prints each question with its preface and
+                response options before generation begins. 0 suppresses that output.
         
         Returns:
             pd.DataFrame: DataFrame containing all generated responses
@@ -298,8 +413,11 @@ Be sure to consider the full range of options including:
         Raises:
             RuntimeError: If no valid responses could be generated
         """
+        if verbosity >= 1:
+            self._print_survey_overview()
+
         # Create header for the dataframe
-        columns = ["resid", "model"] + list(self.persona_dict.keys()) + [f"Q{i+1}" for i in range(len(self.questions))]
+        columns = ["resid", "model"] + list(self.persona_dict.keys()) + [q["id"] for q in self.questions]
 
         # Initialize empty lists to store the data
         data = []
@@ -327,7 +445,7 @@ Be sure to consider the full range of options including:
                         error_count = 0
                     except Exception as e:
                         error_count += 1
-                        warnings.warn(f"Error processing question '{question}': {str(e)}")
+                        warnings.warn(f"Error processing question '{question['text']}': {str(e)}")
                         row_data.append("ERROR")
 
                         if error_count >= self.max_try:
@@ -368,7 +486,7 @@ Be sure to consider the full range of options including:
         df = pd.DataFrame(data, columns=columns)
         return df
 
-    def run_write(self, output_file: str) -> pd.DataFrame:
+    def run_write(self, output_file: str, verbosity: int = 1) -> pd.DataFrame:
         """Generate synthetic survey responses, write to file as they're generated, and return as DataFrame.
         
         This method writes each response to the output file as soon as it's generated, ensuring
@@ -379,10 +497,15 @@ Be sure to consider the full range of options including:
         
         Args:
             output_file (str): Path to the output CSV file
+            verbosity (int): 1 (default) prints each question with its preface and
+                response options before generation begins. 0 suppresses that output.
             
         Returns:
             pd.DataFrame: DataFrame containing all generated responses
         """
+        if verbosity >= 1:
+            self._print_survey_overview()
+
         # Check if file exists and update filename with enumeration if needed
         import os
         import psutil
@@ -399,7 +522,7 @@ Be sure to consider the full range of options including:
         output_file = final_output_file
 
         # Create header for the output file and dataframe
-        columns = ["resid", "model"] + list(self.persona_dict.keys()) + [f"Q{i+1}" for i in range(len(self.questions))]
+        columns = ["resid", "model"] + list(self.persona_dict.keys()) + [q["id"] for q in self.questions]
 
         # Initialize empty list to store the data for the returned DataFrame
         data = []
@@ -427,6 +550,12 @@ Be sure to consider the full range of options including:
         except:
             computer_python = "ERROR"
 
+        # Build an example prompt (with a random persona) for each question
+        example_prompts = {}
+        for question in self.questions:
+            _, persona_descriptions = generate_persona_from_file(self.persona_dict)
+            example_prompts[question["id"]] = self._generate_prompt(question, persona_descriptions)
+
         # Collect parameters
         params = {
             "questions_path": self.questions_path,
@@ -435,11 +564,11 @@ Be sure to consider the full range of options including:
             "base_url": self.base_url,
             "num_responses": self.num_responses,
             "temperature": self.temperature,
-            "response_options": self.response_options,
             "run_date": str(pd.Timestamp.now()),
             "num_questions": len(self.questions),
-            "questions": self.questions,
+            "questions_json": {"scales": self.scales, "questions": self.questions},
             "persona_dictionary": self.persona_dict,
+            "example_prompts": example_prompts,
             "computer_memory":computer_memory,
             "computer_os":computer_os,
             "computer_python":computer_python
@@ -472,7 +601,7 @@ Be sure to consider the full range of options including:
                         error_count = 0
                     except Exception as e:
                         error_count += 1
-                        warnings.warn(f"Error processing question '{question}': {str(e)}")
+                        warnings.warn(f"Error processing question '{question['text']}': {str(e)}")
                         row_data.append("ERROR")
 
                         if error_count >= self.max_try:

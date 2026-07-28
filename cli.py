@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import re
 import sys
 from SurveyResponder import SurveyResponder, load_questions
 
@@ -16,8 +18,8 @@ def cli() -> None:
 
     run_parser = subparsers.add_parser("run", help="Run survey responder")
 
-    run_parser.add_argument("--questions", default="questions.txt",
-                            help="Path to questions text file (default: questions.txt)")
+    run_parser.add_argument("--questions", default="questions.json",
+                            help="Path to questions JSON file with scales and questions (default: questions.json)")
     run_parser.add_argument("--persona", default="persona.json",
                             help="Path to persona JSON file (default: persona.json)")
     run_parser.add_argument("--model", default="llama3.1:latest",
@@ -27,20 +29,22 @@ def cli() -> None:
     run_parser.add_argument("--temperature", type=float, default=1.0,
                             help="LLM temperature (default: 1.0)")
     run_parser.add_argument("--response-options", default=None,
-                            help="Comma-separated custom response options (default: 5-point Likert scale)")
+                            help="REMOVED: response options are now defined as named scales in the questions JSON file")
     run_parser.add_argument("--output", default="results.csv",
                             help="CSV filepath to save results (default: results.csv)")
 
     # CLI commands for listing and modifying a file of questions
-    q_parser = subparsers.add_parser("questions", help="List or update questions file (default: questions.txt)")
+    q_parser = subparsers.add_parser("questions", help="List or update questions JSON file (default: questions.json)")
 
     # Ensures questions commands can only be run one at a time
     group = q_parser.add_mutually_exclusive_group(required=True)
 
-    q_parser.add_argument("--file", default="questions.txt", help="Specify which questions file to manage (default: questions.txt)")
+    q_parser.add_argument("--file", default="questions.json", help="Specify which questions JSON file to manage (default: questions.json)")
+    q_parser.add_argument("--id", default=None, help="Question id for --add; used as the output column heading (default: generated from the question text)")
+    q_parser.add_argument("--scale", default=None, help="Scale name for --add; must be defined in the file (default: first scale in the file)")
     group.add_argument("--list", action="store_true", help="List all questions")
-    group.add_argument("--add", type=str, help="Add a new question")
-    group.add_argument("--delete", type=int, help="Delete question by line number")
+    group.add_argument("--add", type=str, help="Add a new question (question text)")
+    group.add_argument("--delete", type=int, help="Delete question by list position (see --list)")
 
     args = parser.parse_args()
 
@@ -49,34 +53,78 @@ def cli() -> None:
         file_path = args.file
         # Ensure file exists
         if not os.path.exists(file_path):
-            # If adding, create the file
+            # If adding, create a new survey file with a default scale
             if args.add:
-                open(file_path, "a").close()
+                default_doc = {
+                    "scales": {
+                        "likert5": {
+                            "preface": "How strongly do you agree or disagree with the following statement:",
+                            "options": {
+                                "strongly disagree": 1,
+                                "disagree": 2,
+                                "neutral": 3,
+                                "agree": 4,
+                                "strongly agree": 5
+                            }
+                        }
+                    },
+                    "questions": []
+                }
+                with open(file_path, "w") as f:
+                    json.dump(default_doc, f, indent=2)
             else:
                 print(f"Questions file not found: {file_path}", file=sys.stderr)
                 sys.exit(1)
 
+        try:
+            scales, questions = load_questions(file_path)
+        except ValueError as e:
+            print(f"File Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
         if args.list:
-            questions = load_questions(file_path)
             for i, question in enumerate(questions, 1):
-                print(f"{i}. {question}")
+                print(f"{i}. [{question['id']}] ({question['scale']}) {question['text']}")
 
         elif args.add:
-            with open(file_path, "a") as f:
-                f.write(args.add.strip() + "\n")
-            print(f"Added question: {args.add.strip()}")
+            text = args.add.strip()
+
+            # Resolve the scale for the new question
+            scale_name = args.scale if args.scale else next(iter(scales))
+            if scale_name not in scales:
+                print(f"Scale '{scale_name}' is not defined in {file_path}. "
+                      f"Defined scales: {list(scales.keys())}", file=sys.stderr)
+                sys.exit(1)
+
+            # Resolve the id for the new question
+            existing_ids = {q["id"] for q in questions}
+            if args.id:
+                qid = args.id
+                if qid in existing_ids:
+                    print(f"Question id '{qid}' already exists in {file_path}.", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                base_id = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "question"
+                qid = base_id
+                counter = 2
+                while qid in existing_ids:
+                    qid = f"{base_id}_{counter}"
+                    counter += 1
+
+            questions.append({"id": qid, "text": text, "scale": scale_name, "reverse_coded": False})
+            with open(file_path, "w") as f:
+                json.dump({"scales": scales, "questions": questions}, f, indent=2)
+            print(f"Added question [{qid}] ({scale_name}): {text}")
 
         elif args.delete:
-            questions = load_questions(file_path)
             index = args.delete - 1
             if index < 0 or index >= len(questions):
-                print(f"Invalid line number: {args.delete}", file=sys.stderr)
+                print(f"Invalid question number: {args.delete}", file=sys.stderr)
                 sys.exit(1)
             removed = questions.pop(index)
             with open(file_path, "w") as f:
-                for q in questions:
-                    f.write(q + "\n")
-            print(f"Deleted question: {removed}")
+                json.dump({"scales": scales, "questions": questions}, f, indent=2)
+            print(f"Deleted question [{removed['id']}]: {removed['text']}")
 
         else:
             print("No action specified. Use --list, --add, or --delete.", file=sys.stderr)
@@ -85,15 +133,12 @@ def cli() -> None:
 
     # Run main program commands
     elif args.command == "run":
-        # Convert response options to default array (in form of ["Never", "Sometimes", "Always"])
-        response_options = None
+        # The --response-options flag has been removed in favor of scales in the questions JSON file
         if args.response_options:
-            response_options = []
-            split_options = args.response_options.split(",")
-            for option in split_options:
-                stripped = option.strip()
-                if stripped:
-                    response_options.append(stripped)
+            print("Input Error: --response-options has been removed. Response options are now "
+                  "defined as named scales in the questions JSON file passed to --questions "
+                  "(see questions.json for an example).", file=sys.stderr)
+            sys.exit(1)
         # Validate args and instantiate a SurveyResponder
         try:
             # Check for the existence of starting files
@@ -109,9 +154,7 @@ def cli() -> None:
             if output_dir and not os.path.exists(output_dir):
                 raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
 
-            # Responses and Temperature validation
-            if response_options is not None and len(response_options) <= 2:
-                raise ValueError("You must provide at least 2 response options.")
+            # Temperature validation
             if not (0.0 <= args.temperature <= 2.0):
                 raise ValueError("Temperature must be between 0.0 and 2.0")
 
@@ -120,7 +163,6 @@ def cli() -> None:
                 questions_path=args.questions,
                 persona_path=args.persona,
                 model_name=args.model,
-                response_options=response_options,
                 num_responses=args.num_responses,
                 temperature=args.temperature,
             )

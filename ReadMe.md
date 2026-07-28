@@ -23,10 +23,10 @@ A small collection of previous responses are available via [Google Drive](https:
 
 ## 🔧 Features
 
-- ✅ Default Likert scale (`Strongly Disagree` to `Strongly Agree`, with neutral midpoint).
-- ✅ Custom response options (passed as a list).
+- ✅ Named response scales (e.g., 5-point agreement, 5-point frequency) defined once and referenced per question.
+- ✅ Per-question response options with numeric codes and prompt prefaces (via `questions.json`).
 - ✅ Persona-driven simulation (via a JSON file with structured traits and descriptions).
-- ✅ Supports simple text files (one question per line).
+- ✅ Questions specified in JSON with stable ids (used as output column headings) and reverse-coding flags.
 - ✅ Generates N responses per session.
 - ✅ Outputs a tidy CSV file.
 - ✅ Temperature setting for controlling LLM creativity.
@@ -58,7 +58,7 @@ SurveyResponder is currently a single Python file (beta), installation is simple
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/SurveyResponder.py" -OutFile "SurveyResponder.py"
 
 # Download example files (optional)
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/questions.txt" -OutFile "questions.txt"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/questions.json" -OutFile "questions.json"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/persona.json" -OutFile "persona.json"
 ```
 
@@ -69,7 +69,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/adamrossnelson/SurveyR
 curl -O https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/SurveyResponder.py
 
 # Download example files (optional)
-curl -O https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/questions.txt
+curl -O https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/questions.json
 curl -O https://raw.githubusercontent.com/adamrossnelson/SurveyResponder/main/persona.json
 ```
 
@@ -105,10 +105,9 @@ df.to_csv("results.csv", index=False)
 
 # Advanced usage with all parameters
 responder = SurveyResponder(
-    questions_path="questions.txt",
+    questions_path="questions.json",
     persona_path="persona.json",
     model_name="llava-llama3:latest",
-    response_options=["Never", "Rarely", "Sometimes", "Often", "Always"],
     num_responses=100,
     temperature=1.0,
     base_url="http://localhost:11434/api/generate"
@@ -126,21 +125,20 @@ df = responder.run_write("results.csv")
 
 ### As a CLI tool 
 
-1. **Run a survey:** `python cli.py run --questions questions.txt --num-responses 10`
+1. **Run a survey:** `python cli.py run --questions questions.json --num-responses 10`
 2. **Manage your questions:**
    `python cli.py questions --list`
-   `python cli.py questions --add "I enjoy this research project."`
+   `python cli.py questions --add "I enjoy this research project." --scale likert5`
 
 **Full example with advanced options:**
 ```bash
 python cli.py run \
-  --questions questions.txt \
+  --questions questions.json \
   --persona persona.json \
   --model llama3.1:latest \
   --num-responses 100 \
   --output results.csv \
-  --temperature 1.0 \
-  --response-options "Never,Rarely,Sometimes,Often,Always"
+  --temperature 1.0
 
 ---
 
@@ -159,10 +157,9 @@ ollama pull mistral:latest
 
 from SurveyResponder import SurveyResponder
 responder = SurveyResponder(
-    questions_path="questions.txt",
+    questions_path="questions.json",
     persona_path="persona.json",
     model_name="mistral:latest", # Changed to mistral
-    response_options=["Disagree", "Slightly Disagree", "Neutral", "Slightly Agree", "Agree"],
     num_responses=100,
     temperature=1.0,
     base_url="http://localhost:11434/api/generate"
@@ -171,15 +168,27 @@ responder = SurveyResponder(
 ### Editing Questions and Personas
 SurveyResponder uses two input files:
 
-`questions.txt` — plain text, one survey question per line.
+`questions.json` — JSON with a `scales` library and a `questions` list. Each question has an `id` (used as the output column heading), `text`, a `scale` reference, and a `reverse_coded` flag.
 
 `persona.json` — a dictionary of traits where each key becomes a column and each value is a list of [value, description] pairs.
 
 You can edit these files manually in a file browser, text editor, or like this:
 ```python
-# Add a new question to questions.txt
-with open("questions.txt", "a") as f:
-    f.write("\nI feel confident solving programming problems.")
+# Add a new question to questions.json
+import json
+
+with open("questions.json", "r") as f:
+    survey = json.load(f)
+
+survey["questions"].append({
+    "id": "confident_programming",
+    "text": "I feel confident solving programming problems.",
+    "scale": "likert5",
+    "reverse_coded": False
+})
+
+with open("questions.json", "w") as f:
+    json.dump(survey, f, indent=2)
 
 # Add a new trait to persona.json
 import json
@@ -196,18 +205,22 @@ with open("persona.json", "w") as f:
     json.dump(personas, f, indent=2)
 ```
 ### Changing Response Options
-The default likert scale can be changed to more accurately fit specific questions and personas, and it can be done via the following:
-```python
-responder = SurveyResponder(
-    questions_path="questions.txt",
-    persona_path="persona.json",
-    model_name="mistral:latest",
-    response_options=["Never", "Rarely", "Often", "Always"], # Changed to 4 point likert scale
-    num_responses=100,
-    temperature=1.0,
-    base_url="http://localhost:11434/api/generate"
-)
+Response options are defined as named scales in `questions.json`. Each scale pairs a prompt `preface` with an `options` map of response labels to numeric codes. Add or edit scales in the `scales` section, then reference them from individual questions:
+```json
+{
+  "scales": {
+    "freq4": {
+      "preface": "How often is the following true for you:",
+      "options": {"never": 1, "rarely": 2, "often": 3, "always": 4}
+    }
+  },
+  "questions": [
+    {"id": "calm_pressure", "text": "I stay calm under pressure", "scale": "freq4", "reverse_coded": false}
+  ]
+}
 ```
+
+Note: The `response_options` parameter has been removed from `SurveyResponder`. Passing it raises an error directing you to the questions JSON file.
 
 ### Preview Personas and Prompts
 
@@ -239,14 +252,30 @@ print(prompt)
 
 ## 📁 File Formats
 
-### Input: `questions.txt`
+### Input: `questions.json`
 
-Plain text file, one survey question per line:
+JSON file with named response scales and a list of questions. Each question's `id` becomes its column heading in the output CSV. Each question references a scale by name, and each scale defines the prompt `preface` and the `options` (response labels mapped to numeric codes):
 
-```
-I enjoy working in teams.
-I prefer a structured schedule.
-I feel confident in my abilities.
+```json
+{
+  "scales": {
+    "likert5": {
+      "preface": "How strongly do you agree or disagree with the following statement:",
+      "options": {
+        "strongly disagree": 1,
+        "disagree": 2,
+        "neutral": 3,
+        "agree": 4,
+        "strongly agree": 5
+      }
+    }
+  },
+  "questions": [
+    {"id": "enjoy_teams", "text": "I enjoy working in teams.", "scale": "likert5", "reverse_coded": false},
+    {"id": "prefer_structure", "text": "I prefer a structured schedule.", "scale": "likert5", "reverse_coded": false},
+    {"id": "confident_abilities", "text": "I feel confident in my abilities.", "scale": "likert5", "reverse_coded": false}
+  ]
+}
 ```
 
 ### Input: `persona.json`
@@ -265,10 +294,10 @@ Each key becomes a column in the output CSV. Each value is a list of tuples. The
 
 Example format:
 
-| resid    | age | gender | hobbies | Q1       | Q2      | Q3             |
-| -------- | --- | ------ | ------- | -------- | ------- | -------------- |
-| 1        | 18  | male   | music   | Agree    | Neutral | Strongly Agree |
-| 2        | 20  | female | art     | Disagree | Agree   | Agree          |
+| resid    | age | gender | hobbies | enjoy_teams | prefer_structure | confident_abilities |
+| -------- | --- | ------ | ------- | ----------- | ---------------- | ------------------- |
+| 1        | 18  | male   | music   | agree       | neutral          | strongly agree      |
+| 2        | 20  | female | art     | disagree    | agree            | agree               |
 
 ### Output: `results_params.json`
 
@@ -276,17 +305,32 @@ Configuration parameters file for reproducibility:
 
 ```json
 {
-  "questions_path": "questions.txt",
+  "questions_path": "questions.json",
   "persona_path": "persona.json",
   "model_name": "llava-llama3:latest",
   "base_url": "http://localhost:11434/api/generate",
   "num_responses": 100,
   "temperature": 1.0,
-  "response_options": ["Never", "Rarely", "Sometimes", "Often", "Always"],
   "run_date": "2025-04-03 21:04:23.123456",
-  "num_questions": 3
+  "num_questions": 3,
+  "questions_json": {
+    "scales": {
+      "likert5": {
+        "preface": "How strongly do you agree or disagree with the following statement:",
+        "options": {"strongly disagree": 1, "disagree": 2, "neutral": 3, "agree": 4, "strongly agree": 5}
+      }
+    },
+    "questions": [
+      {"id": "enjoy_teams", "text": "I enjoy working in teams.", "scale": "likert5", "reverse_coded": false}
+    ]
+  },
+  "example_prompts": {
+    "enjoy_teams": "You are a someone who is 18 years old, ... \n\nHow strongly do you agree or disagree with the following statement:\n\"I enjoy working in teams.\"\n\nstrongly disagree, disagree, neutral, agree, strongly agree\n\n..."
+  }
 }
 ```
+
+The `questions_json` key preserves the complete contents of the questions file (scales and questions) as used for the run. The `example_prompts` key records one fully rendered prompt per question (each with a randomly generated persona) so the exact prompt wording sent to the LLM is documented.
 
 ---
 
@@ -353,6 +397,7 @@ The following features are under consideration for future releases:
 - **Persona templates**: Provide predefined personas for ease of use.
 - **Expanded persona logic**: Include sampling strategies, weights, and dependencies between persona traits.
 - **Question metadata support**: Allow users to include additional metadata about questions (e.g., topic, valence) to inform response generation.
+- **Numeric and reverse-coded output options**: Add options to `run()` and `run_write()` to optionally return numeric-coded responses and to optionally apply reverse coding where applicable (the per-question `reverse_coded` flag and numeric codes are already captured in `questions.json`).
 - **Batch processing of surveys**: Enable running multiple different surveys or question sets in one go.
 - **Psychometric summaries**:
   - Perform exploratory factor analysis (EFA) and provide outputs.
