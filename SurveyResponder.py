@@ -304,7 +304,7 @@ Be sure to consider the full range of options including:
                     "model": self.model_name,
                     "prompt": prompt,
                     "stream": False,
-                    "temperature": self.temperature
+                    "options": {"temperature": self.temperature}
                 }
             )
             response.raise_for_status()
@@ -359,7 +359,7 @@ Be sure to consider the full range of options including:
                     "model": self.model_name,
                     "prompt": prompt,
                     "stream": False,
-                    "temperature": 0.2
+                    "options": {"temperature": 0.2}
                 }
             )
             response.raise_for_status()
