@@ -208,7 +208,7 @@ class SurveyResponder:
         Returns:
             str: Formatted prompt for the LLM.
         """
-        persona_description = "You are a someone " + ", ".join(persona_descriptions) + "."
+        persona_description = "You are a survey respondent " + ", ".join(persona_descriptions) + "."
         scale = self.scales[question["scale"]]
         option_labels = list(scale["options"].keys())
         return f"""{persona_description}
