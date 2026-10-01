@@ -2,7 +2,7 @@ import pytest
 import os
 import pandas as pd
 from .. import SurveyResponder, load_questions, load_persona_file, generate_persona_from_file
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 def test_surveyresponder_initialization(sample_questions_file, sample_persona_file):
     """Test SurveyResponder initialization with default parameters."""
@@ -149,6 +149,60 @@ def test_legacy_text_questions_rejected(tmp_path, sample_persona_file):
             questions_path=str(legacy_file),
             persona_path=sample_persona_file
         )
+
+@pytest.mark.parametrize("temperature", [0.0, 1.0])
+def test_run_sends_configured_temperature_to_model(sample_questions_file, sample_persona_file, temperature):
+    """Test that the temperature configured on SurveyResponder is forwarded to the LLM call.
+
+    Mocks requests.post so no real model is required, and asserts that every
+    call's JSON payload includes the configured temperature under
+    options.temperature.
+    """
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"response": "agree"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("requests.post", return_value=mock_response) as mock_post:
+        responder = SurveyResponder(
+            questions_path=sample_questions_file,
+            persona_path=sample_persona_file,
+            num_responses=2,
+            temperature=temperature
+        )
+        responder.run(verbosity=0)
+
+    assert mock_post.called                           # Verify the model was "called"
+    for call in mock_post.call_args_list:
+        sent_temperature = call.kwargs["json"]["options"]["temperature"]
+        assert sent_temperature == temperature         # Verify configured temperature reached the request
+
+def test_run_write_sends_configured_temperature_to_model(sample_questions_file, sample_persona_file, tmp_path):
+    """Test that run_write() forwards each instance's configured temperature to the LLM call."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"response": "agree"}
+    mock_response.raise_for_status.return_value = None
+
+    temperatures_seen = {}
+    for temperature in (0.0, 1.0):
+        output_file = os.path.join(tmp_path, f"temp_{temperature}.csv")
+        with patch("requests.post", return_value=mock_response) as mock_post:
+            responder = SurveyResponder(
+                questions_path=sample_questions_file,
+                persona_path=sample_persona_file,
+                num_responses=2,
+                temperature=temperature
+            )
+            responder.run_write(output_file, verbosity=0)
+
+        sent_temperatures = {
+            call.kwargs["json"]["options"]["temperature"]
+            for call in mock_post.call_args_list
+        }
+        assert sent_temperatures == {temperature}      # Verify every call used this instance's temperature
+        temperatures_seen[temperature] = sent_temperatures
+
+    # Verify the two instances actually sent different temperatures (not hardcoded)
+    assert temperatures_seen[0.0] != temperatures_seen[1.0]
 
 def test_persona_consistency_across_questions(sample_questions_file, sample_persona_file, mock_ollama_response):
     """Test that the same persona is used for all questions within a single response row."""
